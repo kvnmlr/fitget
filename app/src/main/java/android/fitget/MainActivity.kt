@@ -1,39 +1,37 @@
 package android.fitget
 
 import android.Manifest
+import android.accounts.AccountManager
+import android.app.Activity
+import android.app.ProgressDialog
+import android.content.Context
+import android.content.Intent
+import android.fitget.R.id.btn_call_api
+import android.fitget.R.id.fab
+import android.net.ConnectivityManager
+import android.os.AsyncTask
 import android.os.Bundle
 import android.support.design.widget.Snackbar
 import android.support.v7.app.AppCompatActivity
+import android.text.TextUtils
 import android.view.Menu
 import android.view.MenuItem
-
-import kotlinx.android.synthetic.main.activity_main.*
-import pub.devrel.easypermissions.EasyPermissions
-import com.google.api.services.sheets.v4.SheetsScopes
-import android.app.ProgressDialog
-import android.view.View
-import android.widget.Button
 import android.widget.TextView
-import com.google.api.client.googleapis.extensions.android.gms.auth.GoogleAccountCredential
-import kotlinx.android.synthetic.main.content_main.*
-import com.google.api.client.util.ExponentialBackOff
-import java.util.*
-import android.Manifest.permission
-import android.Manifest.permission.GET_ACCOUNTS
-import android.content.Context
-import android.content.Context.MODE_PRIVATE
-import pub.devrel.easypermissions.AfterPermissionGranted
-import android.R.id.edit
-import android.content.SharedPreferences
-import android.accounts.AccountManager
-import android.app.Activity
-import android.support.v4.app.NotificationCompat.getExtras
-import android.content.Intent
-import com.google.android.gms.common.GoogleApiAvailability
 import com.google.android.gms.common.ConnectionResult
-import android.net.NetworkInfo
-import android.net.ConnectivityManager
-import android.support.annotation.NonNull
+import com.google.android.gms.common.GoogleApiAvailability
+import com.google.api.client.extensions.android.http.AndroidHttp
+import com.google.api.client.googleapis.extensions.android.gms.auth.GoogleAccountCredential
+import com.google.api.client.googleapis.extensions.android.gms.auth.GooglePlayServicesAvailabilityIOException
+import com.google.api.client.googleapis.extensions.android.gms.auth.UserRecoverableAuthIOException
+import com.google.api.client.http.HttpTransport
+import com.google.api.client.json.JsonFactory
+import com.google.api.client.json.jackson2.JacksonFactory
+import com.google.api.client.util.ExponentialBackOff
+import com.google.api.services.sheets.v4.SheetsScopes
+import kotlinx.android.synthetic.main.activity_main.*
+import kotlinx.android.synthetic.main.content_main.*
+import pub.devrel.easypermissions.AfterPermissionGranted
+import pub.devrel.easypermissions.EasyPermissions
 
 
 class MainActivity : AppCompatActivity(), EasyPermissions.PermissionCallbacks {
@@ -63,6 +61,7 @@ class MainActivity : AppCompatActivity(), EasyPermissions.PermissionCallbacks {
 
         btn_call_api.setOnClickListener {
             tv_api_response.text = "Worked"
+            getResultsFromApi()
         }
 
         // Initialize credentials and service object.
@@ -87,8 +86,7 @@ class MainActivity : AppCompatActivity(), EasyPermissions.PermissionCallbacks {
             tv_api_response.text = "No network connection available."
         } else {
             tv_api_response.text = "API worked."
-
-//            MakeRequestTask(mCredential).execute()
+            MakeRequestTask(mCredential!!, tv_api_response).execute()
         }
     }
 
@@ -262,5 +260,85 @@ class MainActivity : AppCompatActivity(), EasyPermissions.PermissionCallbacks {
                 connectionStatusCode,
                 REQUEST_GOOGLE_PLAY_SERVICES)
         dialog.show()
+    }
+
+    /**
+     * An asynchronous task that handles the Google Sheets API call.
+     * Placing the API calls in their own task ensures the UI stays responsive.
+     */
+    internal inner class MakeRequestTask(var credential: GoogleAccountCredential, var tv_api_response: TextView) : AsyncTask<Void, Void, List<String>>() {
+        private var mService: com.google.api.services.sheets.v4.Sheets? = null
+        private var mLastError: Exception? = null
+
+        init {
+            this.tv_api_response = tv_api_response
+            val transport:HttpTransport = AndroidHttp.newCompatibleTransport()
+            val jsonFactory: JsonFactory = JacksonFactory.getDefaultInstance()
+            this.mService = com.google.api.services.sheets.v4.Sheets.Builder(transport, jsonFactory, credential).setApplicationName("Fitget").build()
+        }
+
+        override fun onPreExecute() {
+            super.onPreExecute()
+            this.tv_api_response.text = "ok"
+        }
+
+        override fun onPostExecute(result: List<String>?) {
+            super.onPostExecute(result)
+            if (result == null || result.isEmpty()) {
+                this.tv_api_response.text = "No results returned"
+            } else {
+                this.tv_api_response.text = TextUtils.join("\n", result)
+            }
+        }
+
+        override fun onCancelled() {
+            super.onCancelled()
+            if (mLastError != null) {
+                if (mLastError is GooglePlayServicesAvailabilityIOException) {
+                    this@MainActivity.showGooglePlayServicesAvailabilityErrorDialog(
+                            (mLastError as GooglePlayServicesAvailabilityIOException).connectionStatusCode)
+                } else if (mLastError is UserRecoverableAuthIOException) {
+                    startActivityForResult((mLastError as UserRecoverableAuthIOException).intent,
+                            MainActivity.REQUEST_AUTHORIZATION)
+                } else {
+                    this.tv_api_response.text = "The following error occured: " + mLastError!!.message
+                }
+            } else {
+                this.tv_api_response.text = "Request cancelled"
+            }
+        }
+
+        /**
+         * Background task to call Google Sheets API.
+         * @param params no parameters needed for this task.
+         */
+        override fun doInBackground(vararg p0: Void?): List<String>? {
+            return try {
+                getDataFromApi()
+            } catch (e: Exception) {
+                mLastError = e
+                cancel(true)
+                null
+            }
+        }
+
+        /**
+         * Fetch a list of names and majors of students in a sample spreadsheet:
+         * https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit
+         * @return List of names and majors
+         * @throws IOException
+         */
+        private fun getDataFromApi(): List<String> {
+            val spreadsheetId = "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms"
+            val range = "Class Data!A2:E"
+            val results: MutableList<String> = mutableListOf()
+
+            val response: com.google.api.services.sheets.v4.model.ValueRange? = this.mService!!.spreadsheets().values().get(spreadsheetId, range).execute()
+            val values: List<List<Any>> = response!!.getValues()
+            results.add("Name, Major")
+            values.mapTo(results) { it[0].toString() + ", " + it[1] }
+            return results
+        }
+
     }
 }
