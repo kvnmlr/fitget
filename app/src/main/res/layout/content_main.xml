@@ -8,7 +8,14 @@
     tools:context="android.fitget.MainActivity"
     tools:showIn="@layout/activity_main">
 
+    <Button
+        android:id="@+id/btn_call_api"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/call_api"/>
+
     <TextView
+        android:id="@+id/tv_api_response"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text="Hello World!"
