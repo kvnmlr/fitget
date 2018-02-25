@@ -11,6 +11,9 @@ import android.os.AsyncTask
 import android.os.Bundle
 import android.support.design.widget.Snackbar
 import android.support.v7.app.AppCompatActivity
+import android.support.v7.widget.LinearLayoutManager
+import android.support.v7.widget.RecyclerView
+import android.support.v7.widget.RecyclerView.Adapter
 import android.text.TextUtils
 import android.view.Menu
 import android.view.MenuItem
@@ -36,6 +39,8 @@ import java.io.IOException
 class MainActivity : AppCompatActivity(), EasyPermissions.PermissionCallbacks {
 
     private var mCredential: GoogleAccountCredential? = null
+    private var mAdapter: RecyclerView.Adapter<*>? = null
+    private var mLayoutManager: RecyclerView.LayoutManager? = null
 
     companion object {
         const val REQUEST_ACCOUNT_PICKER = 1000
@@ -61,6 +66,15 @@ class MainActivity : AppCompatActivity(), EasyPermissions.PermissionCallbacks {
         }
 
         pb_api_progress.visibility = View.VISIBLE
+
+        mLayoutManager = LinearLayoutManager(this)
+
+        val data = arrayListOf("ok", "worked")
+        mAdapter = PlansAdapter(data)
+
+        rv_plans.setHasFixedSize(true)
+        rv_plans.layoutManager = mLayoutManager
+        rv_plans.adapter = mAdapter
 
         // Initialize credentials and service object.
         mCredential = GoogleAccountCredential.usingOAuth2(
