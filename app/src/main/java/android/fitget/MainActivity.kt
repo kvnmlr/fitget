@@ -2,12 +2,10 @@ package android.fitget
 
 import android.Manifest
 import android.accounts.AccountManager
+import android.annotation.SuppressLint
 import android.app.Activity
-import android.app.ProgressDialog
 import android.content.Context
 import android.content.Intent
-import android.fitget.R.id.btn_call_api
-import android.fitget.R.id.fab
 import android.net.ConnectivityManager
 import android.os.AsyncTask
 import android.os.Bundle
@@ -16,7 +14,7 @@ import android.support.v7.app.AppCompatActivity
 import android.text.TextUtils
 import android.view.Menu
 import android.view.MenuItem
-import android.widget.TextView
+import android.view.View
 import com.google.android.gms.common.ConnectionResult
 import com.google.android.gms.common.GoogleApiAvailability
 import com.google.api.client.extensions.android.http.AndroidHttp
@@ -32,12 +30,12 @@ import kotlinx.android.synthetic.main.activity_main.*
 import kotlinx.android.synthetic.main.content_main.*
 import pub.devrel.easypermissions.AfterPermissionGranted
 import pub.devrel.easypermissions.EasyPermissions
+import java.io.IOException
 
 
 class MainActivity : AppCompatActivity(), EasyPermissions.PermissionCallbacks {
 
-    var mCredential: GoogleAccountCredential? = null
-    var mProgress: ProgressDialog? = null
+    private var mCredential: GoogleAccountCredential? = null
 
     companion object {
         const val REQUEST_ACCOUNT_PICKER = 1000
@@ -46,7 +44,6 @@ class MainActivity : AppCompatActivity(), EasyPermissions.PermissionCallbacks {
         const val REQUEST_PERMISSION_GET_ACCOUNTS = 1003
     }
 
-    private val BUTTON_TEXT = "Call Google Sheets API"
     private val PREF_ACCOUNT_NAME = "accountName"
     private val SCOPES = arrayOf(SheetsScopes.SPREADSHEETS_READONLY)
 
@@ -60,9 +57,10 @@ class MainActivity : AppCompatActivity(), EasyPermissions.PermissionCallbacks {
         }
 
         btn_call_api.setOnClickListener {
-            tv_api_response.text = "Worked"
             getResultsFromApi()
         }
+
+        pb_api_progress.visibility = View.VISIBLE
 
         // Initialize credentials and service object.
         mCredential = GoogleAccountCredential.usingOAuth2(
@@ -83,10 +81,9 @@ class MainActivity : AppCompatActivity(), EasyPermissions.PermissionCallbacks {
         } else if (mCredential!!.selectedAccountName == null) {
             chooseAccount()
         } else if (!isDeviceOnline()) {
-            tv_api_response.text = "No network connection available."
+            tv_api_response.text = getString(R.string.err_no_network)
         } else {
-            tv_api_response.text = "API worked."
-            MakeRequestTask(mCredential!!, tv_api_response).execute()
+            MakeRequestTask(mCredential!!).execute()
         }
     }
 
@@ -140,12 +137,11 @@ class MainActivity : AppCompatActivity(), EasyPermissions.PermissionCallbacks {
         super.onActivityResult(requestCode, resultCode, data)
         when (requestCode) {
             REQUEST_GOOGLE_PLAY_SERVICES -> if (resultCode != Activity.RESULT_OK) {
-                tv_api_response.text = "This app requires Google Play Services. Please install " + "Google Play Services on your device and relaunch this app."
+                tv_api_response.text = getString(R.string.err_no_play_service_installed)
             } else {
                 getResultsFromApi()
             }
-            REQUEST_ACCOUNT_PICKER -> if (resultCode == Activity.RESULT_OK && data != null &&
-                    data.extras != null) {
+            REQUEST_ACCOUNT_PICKER -> if (resultCode == Activity.RESULT_OK && data != null && data.extras != null) {
                 val accountName = data.getStringExtra(AccountManager.KEY_ACCOUNT_NAME)
                 if (accountName != null) {
                     val settings = getPreferences(Context.MODE_PRIVATE)
@@ -266,51 +262,53 @@ class MainActivity : AppCompatActivity(), EasyPermissions.PermissionCallbacks {
      * An asynchronous task that handles the Google Sheets API call.
      * Placing the API calls in their own task ensures the UI stays responsive.
      */
-    internal inner class MakeRequestTask(var credential: GoogleAccountCredential, var tv_api_response: TextView) : AsyncTask<Void, Void, List<String>>() {
+    @SuppressLint("StaticFieldLeak")
+    inner class MakeRequestTask(credential: GoogleAccountCredential)
+        : AsyncTask<Void, Void, List<String>>() {
+
         private var mService: com.google.api.services.sheets.v4.Sheets? = null
         private var mLastError: Exception? = null
 
         init {
-            this.tv_api_response = tv_api_response
             val transport:HttpTransport = AndroidHttp.newCompatibleTransport()
             val jsonFactory: JsonFactory = JacksonFactory.getDefaultInstance()
-            this.mService = com.google.api.services.sheets.v4.Sheets.Builder(transport, jsonFactory, credential).setApplicationName("Fitget").build()
+            this.mService = com.google.api.services.sheets.v4.Sheets.Builder(transport, jsonFactory, credential).setApplicationName(getString(R.string.app_name)).build()
         }
 
         override fun onPreExecute() {
             super.onPreExecute()
-            this.tv_api_response.text = "ok"
+            this@MainActivity.pb_api_progress.visibility = View.VISIBLE
         }
 
         override fun onPostExecute(result: List<String>?) {
             super.onPostExecute(result)
+            this@MainActivity.pb_api_progress.visibility = View.INVISIBLE
             if (result == null || result.isEmpty()) {
-                this.tv_api_response.text = "No results returned"
+                this@MainActivity.tv_api_response.text = "No results returned"
             } else {
-                this.tv_api_response.text = TextUtils.join("\n", result)
+                this@MainActivity.tv_api_response.text = TextUtils.join("\n", result)
             }
         }
 
         override fun onCancelled() {
             super.onCancelled()
+            this@MainActivity.pb_api_progress.visibility = View.INVISIBLE
             if (mLastError != null) {
-                if (mLastError is GooglePlayServicesAvailabilityIOException) {
-                    this@MainActivity.showGooglePlayServicesAvailabilityErrorDialog(
+                when (mLastError) {
+                    is GooglePlayServicesAvailabilityIOException -> this@MainActivity.showGooglePlayServicesAvailabilityErrorDialog(
                             (mLastError as GooglePlayServicesAvailabilityIOException).connectionStatusCode)
-                } else if (mLastError is UserRecoverableAuthIOException) {
-                    startActivityForResult((mLastError as UserRecoverableAuthIOException).intent,
+                    is UserRecoverableAuthIOException -> startActivityForResult((mLastError as UserRecoverableAuthIOException).intent,
                             MainActivity.REQUEST_AUTHORIZATION)
-                } else {
-                    this.tv_api_response.text = "The following error occured: " + mLastError!!.message
+                    else -> this@MainActivity.tv_api_response.text = getString(R.string.err_generic, mLastError!!.message)
                 }
             } else {
-                this.tv_api_response.text = "Request cancelled"
+                this@MainActivity.tv_api_response.text = getString(R.string.err_generic, "Request has been cancelled")
             }
         }
 
         /**
          * Background task to call Google Sheets API.
-         * @param params no parameters needed for this task.
+         * @param p0 no parameters needed for this task.
          */
         override fun doInBackground(vararg p0: Void?): List<String>? {
             return try {
@@ -339,6 +337,5 @@ class MainActivity : AppCompatActivity(), EasyPermissions.PermissionCallbacks {
             values.mapTo(results) { it[0].toString() + ", " + it[1] }
             return results
         }
-
     }
 }

@@ -14,6 +14,11 @@
         android:layout_height="wrap_content"
         android:text="@string/call_api"/>
 
+    <ProgressBar
+        android:id="@+id/pb_api_progress"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content" />
+
     <TextView
         android:id="@+id/tv_api_response"
         android:layout_width="wrap_content"
