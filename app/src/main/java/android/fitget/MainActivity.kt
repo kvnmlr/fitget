@@ -92,7 +92,13 @@ class MainActivity : AppCompatActivity(), EasyPermissions.PermissionCallbacks {
         pb_api_progress.visibility = View.INVISIBLE
 
         mLayoutManager = LinearLayoutManager(this)
-        val data = arrayListOf("ok", "worked")
+        val planA = Plan("Plan A")
+        val planB = Plan("Plan B")
+        val planC = Plan("Plan C")
+        val planD = Plan("Plan D")
+        val planE = Plan("Plan E")
+        val planF = Plan("Plan F")
+        val data = arrayListOf(planA, planB, planC, planD, planE, planF)
         mAdapter = PlansAdapter(data)
 
         rv_plans.setHasFixedSize(true)
