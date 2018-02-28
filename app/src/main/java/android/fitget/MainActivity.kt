@@ -5,6 +5,7 @@ import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.content.IntentSender
 import android.net.ConnectivityManager
 import android.os.AsyncTask
 import android.os.Bundle
@@ -23,18 +24,19 @@ import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import com.google.android.gms.common.ConnectionResult
 import com.google.android.gms.common.GoogleApiAvailability
 import com.google.android.gms.common.api.Scope
-import com.google.android.gms.drive.Drive
-import com.google.android.gms.drive.DriveClient
-import com.google.android.gms.drive.DriveResourceClient
-import com.google.android.gms.drive.MetadataBuffer
+import com.google.android.gms.drive.*
 import com.google.android.gms.drive.query.Filters
 import com.google.android.gms.drive.query.Query
 import com.google.android.gms.drive.query.SearchableField
+import com.google.android.gms.tasks.Continuation
+import com.google.android.gms.tasks.OnSuccessListener
 import com.google.android.gms.tasks.Task
+import com.google.android.gms.tasks.Tasks
 import com.google.api.client.extensions.android.http.AndroidHttp
 import com.google.api.client.googleapis.extensions.android.gms.auth.GoogleAccountCredential
 import com.google.api.client.googleapis.extensions.android.gms.auth.GooglePlayServicesAvailabilityIOException
 import com.google.api.client.googleapis.extensions.android.gms.auth.UserRecoverableAuthIOException
+import com.google.api.client.googleapis.javanet.GoogleNetHttpTransport
 import com.google.api.client.http.HttpTransport
 import com.google.api.client.json.JsonFactory
 import com.google.api.client.json.jackson2.JacksonFactory
@@ -42,12 +44,14 @@ import com.google.api.client.util.ExponentialBackOff
 import com.google.api.services.sheets.v4.Sheets
 import com.google.api.services.sheets.v4.SheetsScopes
 import com.google.api.services.sheets.v4.SheetsScopes.SPREADSHEETS_READONLY
+import com.google.api.services.sheets.v4.model.Spreadsheet
 import com.google.api.services.sheets.v4.model.ValueRange
 import kotlinx.android.synthetic.main.activity_main.*
 import kotlinx.android.synthetic.main.content_main.*
 import pub.devrel.easypermissions.AfterPermissionGranted
 import pub.devrel.easypermissions.EasyPermissions
 import java.io.IOException
+import java.io.OutputStreamWriter
 
 class MainActivity : AppCompatActivity(), EasyPermissions.PermissionCallbacks {
     companion object {
@@ -128,7 +132,9 @@ class MainActivity : AppCompatActivity(), EasyPermissions.PermissionCallbacks {
         } else if (!isDeviceOnline()) {
             tv_api_response.text = getString(R.string.err_no_network)
         } else {
-            findFiles()
+            //createSpreadsheet()
+            //createFile()
+            //findFiles()
             MakeRequestTask(mCredential!!).execute()
         }
     }
@@ -321,7 +327,7 @@ class MainActivity : AppCompatActivity(), EasyPermissions.PermissionCallbacks {
         Log.d(TAG, "showGooglePlayServicesAvailabilityErrorDialog")
         val apiAvailability = GoogleApiAvailability.getInstance()
         val dialog = apiAvailability.getErrorDialog(
-                this@MainActivity,
+                this,
                 connectionStatusCode,
                 REQUEST_GOOGLE_PLAY_SERVICES)
         dialog.show()
@@ -330,22 +336,62 @@ class MainActivity : AppCompatActivity(), EasyPermissions.PermissionCallbacks {
     /* TODO put into separate AsyncTask */
     private fun findFiles() {
         Log.d(TAG, "findFiles")
-        val mQuery = Query.Builder().addFilter(Filters.contains(SearchableField.TITLE, "Trainingsplan")).build()
+        val mQuery = Query.Builder().addFilter(Filters.contains(SearchableField.TITLE, "HelloWorld")).build()
 
-        val queryTask: Task<MetadataBuffer> = this@MainActivity.mDriveResourceClient!!.query(mQuery!!)
+        val queryTask: Task<MetadataBuffer> = mDriveResourceClient!!.query(mQuery!!)
         queryTask.addOnSuccessListener {
-            Log.d(TAG, "success")
+            Log.d(TAG, "Successfully found files: ")
             for (metadata in it) {
                 Log.d(TAG, metadata.originalFilename)
-                Log.d(TAG, metadata.title)
                 Log.d(TAG, metadata.mimeType)
                 Log.d(TAG, metadata.driveId.toString())
             }
             it.release()
         }
         queryTask.addOnFailureListener {
-            Log.d(TAG, "failure " + it.message)
+            Log.d(TAG, "Failure retrieving files: " + it.message)
         }
+    }
+
+    private fun createFile() {
+        Log.d(TAG, "createFile")
+        val rootFolderTask = mDriveResourceClient!!.rootFolder
+        val createContentsTask = mDriveResourceClient!!.createContents()
+        val continuationTask = CreateFileTask(rootFolderTask, createContentsTask)
+        Tasks.whenAll(rootFolderTask, createContentsTask)
+                .continueWithTask ( continuationTask )
+                .addOnSuccessListener{
+                    Log.d(TAG, "File successfully created")
+                    finish()
+                }
+                .addOnFailureListener {
+                    Log.d(TAG, "File creation failed")
+                    finish()
+                }
+    }
+
+
+
+    inner class CreateFileTask(private val rootFolderTask: Task<DriveFolder>, private val createContentsTask: Task<DriveContents>): Continuation<Void, Task<DriveFile>> {
+        override fun then(p0: Task<Void>): Task<DriveFile> {
+            val parent: DriveFolder = rootFolderTask.result
+            val contents: DriveContents = createContentsTask.result
+            val outputStream = contents.outputStream
+            try {
+                val writer = OutputStreamWriter(outputStream)
+                writer.write("Hello World")
+                writer.close()
+            } catch (e: Exception) {
+                Log.e(TAG, "Could not write the file contents")
+            }
+
+            val changeSet = MetadataChangeSet.Builder()
+                    .setTitle("HelloWorld.txt")
+                    .setMimeType("text/plain")
+                    .setStarred(true)
+                    .build()
+
+            return this@MainActivity.mDriveResourceClient!!.createFile(parent, changeSet, contents)        }
     }
 
     /**
@@ -407,7 +453,8 @@ class MainActivity : AppCompatActivity(), EasyPermissions.PermissionCallbacks {
         override fun doInBackground(vararg p0: Void?): List<String>? {
             Log.d(TAG, "doInBackground")
             return try {
-                getDataFromApi()
+                //getDataFromApi()
+                createSpreadsheet()
             } catch (e: Exception) {
                 mLastError = e
                 Log.e(TAG, e.message)
@@ -433,6 +480,23 @@ class MainActivity : AppCompatActivity(), EasyPermissions.PermissionCallbacks {
             results.add("Name, Major")
             values.mapTo(results) { it[0].toString() + ", " + it[1] }
             return results
+        }
+
+        private fun createSpreadsheet(): List<String> {
+            Log.d(TAG, "createSpreadsheet")
+            val requestBody = Spreadsheet()
+
+            val httpTransport = AndroidHttp.newCompatibleTransport()
+            val jsonFactory = JacksonFactory.getDefaultInstance()
+
+            val sheetService = Sheets.Builder(httpTransport, jsonFactory, mCredential)
+                    .setApplicationName(getString(R.string.app_name))
+                    .build()
+            val request : Sheets.Spreadsheets.Create = sheetService.spreadsheets().create(requestBody)
+
+            val response = request.execute()
+            Log.d(TAG, "Created spreadsheet: " + response)
+            return listOf("")
         }
     }
 }
