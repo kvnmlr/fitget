@@ -3,9 +3,9 @@ package android.fitget
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.arch.persistence.room.Room
 import android.content.Context
 import android.content.Intent
-import android.content.IntentSender
 import android.net.ConnectivityManager
 import android.os.AsyncTask
 import android.os.Bundle
@@ -15,6 +15,7 @@ import android.support.v7.widget.LinearLayoutManager
 import android.support.v7.widget.RecyclerView
 import android.text.TextUtils
 import android.util.Log
+import android.util.Log.d
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
@@ -29,14 +30,12 @@ import com.google.android.gms.drive.query.Filters
 import com.google.android.gms.drive.query.Query
 import com.google.android.gms.drive.query.SearchableField
 import com.google.android.gms.tasks.Continuation
-import com.google.android.gms.tasks.OnSuccessListener
 import com.google.android.gms.tasks.Task
 import com.google.android.gms.tasks.Tasks
 import com.google.api.client.extensions.android.http.AndroidHttp
 import com.google.api.client.googleapis.extensions.android.gms.auth.GoogleAccountCredential
 import com.google.api.client.googleapis.extensions.android.gms.auth.GooglePlayServicesAvailabilityIOException
 import com.google.api.client.googleapis.extensions.android.gms.auth.UserRecoverableAuthIOException
-import com.google.api.client.googleapis.javanet.GoogleNetHttpTransport
 import com.google.api.client.http.HttpTransport
 import com.google.api.client.json.JsonFactory
 import com.google.api.client.json.jackson2.JacksonFactory
@@ -44,8 +43,10 @@ import com.google.api.client.util.ExponentialBackOff
 import com.google.api.services.sheets.v4.Sheets
 import com.google.api.services.sheets.v4.SheetsScopes
 import com.google.api.services.sheets.v4.SheetsScopes.SPREADSHEETS_READONLY
-import com.google.api.services.sheets.v4.model.Spreadsheet
-import com.google.api.services.sheets.v4.model.ValueRange
+import com.google.api.services.sheets.v4.model.*
+import io.reactivex.Single
+import io.reactivex.android.schedulers.AndroidSchedulers
+import io.reactivex.schedulers.Schedulers
 import kotlinx.android.synthetic.main.activity_main.*
 import kotlinx.android.synthetic.main.content_main.*
 import pub.devrel.easypermissions.AfterPermissionGranted
@@ -64,6 +65,8 @@ class MainActivity : AppCompatActivity(), EasyPermissions.PermissionCallbacks {
         private const val PREF_ACCOUNT_NAME = "accountName"
         private val DRIVE_SCOPES: HashSet<Scope> = HashSet()
         private val SHEET_SCOPES: HashSet<String> = HashSet()
+
+        private var database: AppDatabase? = null
     }
 
     init {
@@ -95,6 +98,8 @@ class MainActivity : AppCompatActivity(), EasyPermissions.PermissionCallbacks {
         }
         pb_api_progress.visibility = View.INVISIBLE
 
+        database = Room.databaseBuilder(this, AppDatabase::class.java, "AppDatabase").build()
+
         mLayoutManager = LinearLayoutManager(this)
         val planA = Plan("Plan A")
         val planB = Plan("Plan B")
@@ -103,6 +108,23 @@ class MainActivity : AppCompatActivity(), EasyPermissions.PermissionCallbacks {
         val planE = Plan("Plan E")
         val planF = Plan("Plan F")
         val data = arrayListOf(planA, planB, planC, planD, planE, planF)
+
+        // Insert all plans into the DB
+        for (p: Plan in data) {
+            Single.fromCallable { database?.planDao()?.insert(p) }
+                    .subscribeOn(Schedulers.io())
+                    .subscribe{res -> run { Log.d(TAG, "Inserted plan " + res.toString()) } }
+        }
+
+        // Get all plans
+        database?.planDao()?.getAll()
+                ?.subscribeOn(Schedulers.io())
+                ?.subscribe { res: List<Plan> -> run {
+                    for (plan in res) {
+                        Log.d(TAG, "Read plans: " + plan.title)
+                    }}
+                }
+        database?.planDao()?.getAll()
         mAdapter = PlansAdapter(data)
 
         rv_plans.setHasFixedSize(true)
@@ -454,7 +476,8 @@ class MainActivity : AppCompatActivity(), EasyPermissions.PermissionCallbacks {
             Log.d(TAG, "doInBackground")
             return try {
                 //getDataFromApi()
-                createSpreadsheet()
+                //createSpreadsheet()
+                updateCell()
             } catch (e: Exception) {
                 mLastError = e
                 Log.e(TAG, e.message)
@@ -492,10 +515,58 @@ class MainActivity : AppCompatActivity(), EasyPermissions.PermissionCallbacks {
             val sheetService = Sheets.Builder(httpTransport, jsonFactory, mCredential)
                     .setApplicationName(getString(R.string.app_name))
                     .build()
-            val request : Sheets.Spreadsheets.Create = sheetService.spreadsheets().create(requestBody)
+            val request = sheetService.spreadsheets().create(requestBody)
 
             val response = request.execute()
             Log.d(TAG, "Created spreadsheet: " + response)
+            return listOf("")
+        }
+
+        private fun updateCell(): List<String> {
+            Log.d(TAG, "createSpreadsheet")
+            val spreadsheetID = "1ym3xyrRF2xF_eMPg-mjYSMPlvmwWJqOOR8Z4cI_JqQo"
+            val httpTransport = AndroidHttp.newCompatibleTransport()
+            val jsonFactory = JacksonFactory.getDefaultInstance()
+
+            val values = listOf(listOf("worked","worked"), listOf("worked"))
+            val body = ValueRange().setValues(values)
+
+            val service = Sheets.Builder(httpTransport, jsonFactory, mCredential)
+                    .setApplicationName(getString(R.string.app_name))
+                    .build()
+
+            val request = service.spreadsheets().values().update(spreadsheetID, "A1:B2", body)
+                    .setValueInputOption("RAW")
+            val response = request.execute()
+
+            Log.d(TAG, "Updated spreadsheet: " + response)
+            return listOf("")
+        }
+
+        fun batchUpdateCells(): List<String> {
+            Log.d(TAG, "batchUpdateCells")
+            val spreadsheetID = "1ym3xyrRF2xF_eMPg-mjYSMPlvmwWJqOOR8Z4cI_JqQo"
+            val httpTransport = AndroidHttp.newCompatibleTransport()
+            val jsonFactory = JacksonFactory.getDefaultInstance()
+
+            val updateCellsRequest = UpdateCellsRequest()
+            updateCellsRequest.start = GridCoordinate().setSheetId(0).setRowIndex(1).setColumnIndex(1)
+            updateCellsRequest.rows = listOf(RowData().setValues(listOf(CellData().setUserEnteredValue(ExtendedValue().setStringValue("worked")))))
+            updateCellsRequest.fields = ""
+
+            val updateRequest = Request()
+            updateRequest.updateCells = updateCellsRequest
+
+            val requestBody = BatchUpdateSpreadsheetRequest()
+            requestBody.requests = listOf(updateRequest)
+
+            val sheetService = Sheets.Builder(httpTransport, jsonFactory, mCredential)
+                    .setApplicationName(getString(R.string.app_name))
+                    .build()
+            val request = sheetService.spreadsheets().batchUpdate(spreadsheetID, requestBody)
+            val response = request.execute()
+
+            Log.d(TAG, "Updated spreadsheet: " + response)
             return listOf("")
         }
     }
